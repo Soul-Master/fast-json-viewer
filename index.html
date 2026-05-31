@@ -1,0 +1,1173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Large JSON Tree Viewer</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: Canvas;
+      color: CanvasText;
+    }
+
+    * { box-sizing: border-box; }
+
+    [hidden] { display: none !important; }
+
+    body {
+      margin: 0;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .app {
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      overflow: hidden;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      border-bottom: 1px solid color-mix(in oklab, CanvasText 16%, transparent);
+      background: Canvas;
+      z-index: 20;
+    }
+
+    button {
+      border: 1px solid color-mix(in oklab, CanvasText 20%, transparent);
+      background: color-mix(in oklab, Canvas 92%, CanvasText 8%);
+      color: CanvasText;
+      border-radius: 7px;
+      padding: 5px 9px;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    button:disabled {
+      opacity: .45;
+      cursor: default;
+    }
+
+    .open-menu {
+      position: relative;
+    }
+
+    .open-menu-list {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      z-index: 40;
+      min-width: 320px;
+      padding: 4px;
+      border: 1px solid color-mix(in oklab, CanvasText 18%, transparent);
+      border-radius: 8px;
+      background: Canvas;
+      box-shadow: 0 18px 48px color-mix(in oklab, CanvasText 18%, transparent);
+    }
+
+    .open-menu-list button {
+      width: 100%;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      text-align: left;
+    }
+
+    .open-menu-list button:hover {
+      background: color-mix(in oklab, Canvas 86%, Highlight 14%);
+    }
+
+    .menu-divider {
+      height: 1px;
+      margin: 4px;
+      background: color-mix(in oklab, CanvasText 12%, transparent);
+    }
+
+    input[type="search"] {
+      min-width: 260px;
+      border: 1px solid color-mix(in oklab, CanvasText 20%, transparent);
+      background: Canvas;
+      color: CanvasText;
+      border-radius: 7px;
+      padding: 6px 8px;
+      font: inherit;
+    }
+
+    .tree-tools {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .icon-button {
+      min-width: 30px;
+      height: 30px;
+      padding: 0 7px;
+      display: inline-grid;
+      place-items: center;
+      font-weight: 700;
+    }
+
+    .search {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .viewport {
+      overflow: auto;
+      position: relative;
+      background:
+        linear-gradient(90deg, color-mix(in oklab, CanvasText 4%, transparent) 1px, transparent 1px) 0 0 / 18px 18px;
+    }
+
+    .viewport.empty {
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+    }
+
+    .empty-state {
+      display: grid;
+      gap: 8px;
+      padding: 28px;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      z-index: 30;
+      transform: translate(-50%, -50%);
+      border: 1px dashed color-mix(in oklab, CanvasText 28%, transparent);
+      border-radius: 14px;
+      background: color-mix(in oklab, Canvas 94%, CanvasText 6%);
+      box-shadow: 0 18px 48px color-mix(in oklab, CanvasText 16%, transparent);
+      text-align: center;
+      color: color-mix(in oklab, CanvasText 75%, transparent);
+      pointer-events: none;
+    }
+
+    .empty-state strong {
+      font-size: 20px;
+      color: CanvasText;
+    }
+
+    .tree {
+      font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      padding: 6px 0 60vh 0;
+      min-width: max-content;
+    }
+
+    .row {
+      min-height: 24px;
+      display: flex;
+      align-items: center;
+      padding-right: 14px;
+      border-bottom: 1px solid color-mix(in oklab, CanvasText 7%, transparent);
+      background: Canvas;
+      contain: layout paint style;
+      user-select: text;
+    }
+
+    .row:hover {
+      background: color-mix(in oklab, Canvas 88%, Highlight 12%);
+    }
+
+    .row.selected {
+      background: color-mix(in oklab, Canvas 78%, Highlight 22%);
+      box-shadow: inset 3px 0 0 Highlight;
+    }
+
+    .row.sticky {
+      position: sticky;
+      top: 0;
+      z-index: 9;
+      box-shadow: 0 1px 0 color-mix(in oklab, CanvasText 16%, transparent);
+    }
+
+    .twisty {
+      width: 20px;
+      height: 20px;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      margin-right: 2px;
+      display: inline-grid;
+      place-items: center;
+      font: inherit;
+      color: color-mix(in oklab, CanvasText 72%, transparent);
+      user-select: none;
+    }
+
+    .twisty:disabled {
+      opacity: 1;
+    }
+
+    .key {
+      color: color-mix(in oklab, #6b4eff 80%, CanvasText 20%);
+      font-weight: 600;
+    }
+
+    .colon {
+      color: color-mix(in oklab, CanvasText 45%, transparent);
+    }
+
+    .value {
+      white-space: nowrap;
+    }
+
+    .value.string { color: color-mix(in oklab, #12805c 86%, CanvasText 14%); }
+    .value.number { color: color-mix(in oklab, #8f4e00 86%, CanvasText 14%); }
+    .value.boolean { color: color-mix(in oklab, #a01656 86%, CanvasText 14%); }
+    .value.null { color: color-mix(in oklab, CanvasText 50%, transparent); }
+    .value.array, .value.object { color: color-mix(in oklab, CanvasText 82%, transparent); }
+
+    .match-text {
+      border-radius: 3px;
+      background: #ffd84d;
+      color: #171400;
+    }
+
+    .meta {
+      margin-left: 8px;
+      color: color-mix(in oklab, CanvasText 45%, transparent);
+      font-size: 11px;
+      user-select: none;
+    }
+
+    footer {
+      padding: 5px 8px;
+      border-top: 1px solid color-mix(in oklab, CanvasText 12%, transparent);
+      font-size: 12px;
+      color: color-mix(in oklab, CanvasText 65%, transparent);
+      background: Canvas;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .footer-main {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .footer-metric {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
+    .footer-perf {
+      display: flex;
+      flex: 0 1 auto;
+      justify-content: flex-end;
+      gap: 10px;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .perf-item {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="toolbar">
+      <div id="openMenu" class="open-menu">
+        <button id="openButton" type="button" aria-haspopup="menu" aria-expanded="false">Open JSON</button>
+        <div id="openMenuList" class="open-menu-list" role="menu" hidden>
+          <button id="openLocalButton" type="button" role="menuitem">Open local file</button>
+          <div class="menu-divider" role="separator"></div>
+          <button type="button" role="menuitem" data-sample-url="https://cdn.jsdelivr.net/npm/world-cities-json/data/cities.json" data-sample-name="World cities">
+            Array of 138,398 cities of the world (~12 MB)
+          </button>
+          <button type="button" role="menuitem" data-sample-url="https://unpkg.com/@mdn/browser-compat-data/data.json" data-sample-name="Browser compat data">
+            Complex browser compat data (~19 MB)
+          </button>
+        </div>
+      </div>
+      <div class="tree-tools" aria-label="Tree operations">
+        <button id="rootLevelButton" class="icon-button" type="button" disabled title="Show root level" aria-label="Show root level">&#8962;</button>
+        <button id="expandSelectedButton" class="icon-button" type="button" disabled title="Expand selected nodes" aria-label="Expand selected nodes">&#9658;</button>
+        <button id="collapseSelectedButton" class="icon-button" type="button" disabled title="Collapse selected nodes" aria-label="Collapse selected nodes">&#9660;</button>
+        <button id="expandOneSelectedButton" class="icon-button" type="button" disabled title="Expand one level under selected nodes" aria-label="Expand one level under selected nodes">+1</button>
+        <button id="collapseChildrenButton" class="icon-button" type="button" disabled title="Collapse descendants of selected nodes" aria-label="Collapse descendants of selected nodes">-*</button>
+        <button id="copyAllButton" class="icon-button" type="button" disabled title="Copy entire JSON" aria-label="Copy entire JSON">{} </button>
+        <button id="copySelectedButton" class="icon-button" type="button" disabled title="Copy selected JSON node" aria-label="Copy selected JSON node">&#10697;</button>
+      </div>
+      <input id="fileInput" type="file" accept="application/json,.json" hidden />
+
+      <div class="search">
+        <input id="searchInput" type="search" placeholder="Find key or primitive value" />
+        <button id="findPreviousButton" class="icon-button" type="button" disabled title="Find previous" aria-label="Find previous">&#8593;</button>
+        <button id="findNextButton" class="icon-button" type="button" disabled title="Find next" aria-label="Find next">&#8595;</button>
+        <button id="findButton" disabled>Find</button>
+      </div>
+    </header>
+
+    <section id="viewport" class="viewport empty">
+      <div id="emptyState" class="empty-state">
+        <strong>Drop JSON file</strong>
+        <span>No editor, no highlighter, direct native DOM rendering only.</span>
+        <small id="emptyStatus">Waiting for file.</small>
+      </div>
+      <div id="tree" class="tree" hidden></div>
+    </section>
+
+    <footer>
+      <span id="statusMain" class="footer-main">Ready.</span>
+      <span id="selectionStatus" class="footer-metric" hidden></span>
+      <span id="memoryStatus" class="footer-metric" title="Memory usage">Memory unavailable</span>
+      <span id="performanceStatus" class="footer-perf">
+        <span class="perf-item"></span>
+      </span>
+    </footer>
+  </main>
+
+  <script type="module">
+    const MAX_PREVIEW_ITEMS = 5;
+    const MAX_STRING_PREVIEW = 120;
+    const MAX_ROWS_PER_LEVEL = 1_000;
+    const MAX_SEARCH_VISITS = 300_000;
+
+    let root = undefined;
+    let expanded = new Set(["[]"]);
+    let selectedPathIds = new Set();
+    let visiblePathIds = [];
+    let lastSelectedPathId = null;
+    let searchMatchPathId = null;
+    let searchMatchPart = "";
+    let searchQuery = "";
+    let searchMatches = [];
+    let searchMatchIndex = -1;
+    let fileSize = 0;
+    let dragDepth = 0;
+    let dropAreaTitle = "Drop JSON file";
+    let dropAreaMessage = "Waiting for file.";
+    let mainStatusText = "Ready.";
+
+    const viewport = document.getElementById("viewport");
+    const tree = document.getElementById("tree");
+    const emptyState = document.getElementById("emptyState");
+    const emptyStatus = document.getElementById("emptyStatus");
+    const statusMainEl = document.getElementById("statusMain");
+    const selectionStatusEl = document.getElementById("selectionStatus");
+    const memoryStatusEl = document.getElementById("memoryStatus");
+    const performanceStatusEl = document.getElementById("performanceStatus");
+    const openMenuList = document.getElementById("openMenuList");
+    const fileInput = document.getElementById("fileInput");
+    const openButton = document.getElementById("openButton");
+    const openLocalButton = document.getElementById("openLocalButton");
+    const rootLevelButton = document.getElementById("rootLevelButton");
+    const expandSelectedButton = document.getElementById("expandSelectedButton");
+    const collapseSelectedButton = document.getElementById("collapseSelectedButton");
+    const expandOneSelectedButton = document.getElementById("expandOneSelectedButton");
+    const collapseChildrenButton = document.getElementById("collapseChildrenButton");
+    const copyAllButton = document.getElementById("copyAllButton");
+    const copySelectedButton = document.getElementById("copySelectedButton");
+    const searchInput = document.getElementById("searchInput");
+    const findPreviousButton = document.getElementById("findPreviousButton");
+    const findNextButton = document.getElementById("findNextButton");
+    const findButton = document.getElementById("findButton");
+
+    openButton.addEventListener("click", event => {
+      event.stopPropagation();
+      toggleOpenMenu();
+    });
+
+    openMenuList.addEventListener("click", event => {
+      event.stopPropagation();
+    });
+
+    openLocalButton.addEventListener("click", () => {
+      closeOpenMenu();
+      fileInput.click();
+    });
+
+    openMenuList.querySelectorAll("[data-sample-url]").forEach(button => {
+      button.addEventListener("click", () => {
+        const url = button.dataset.sampleUrl;
+        const name = button.dataset.sampleName;
+        if (url && name) loadRemoteJson(name, url);
+      });
+    });
+
+    document.addEventListener("click", closeOpenMenu);
+
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") closeOpenMenu();
+    });
+
+    document.addEventListener("keydown", event => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+        return;
+      }
+
+      if (event.key === "F3" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "g")) {
+        event.preventDefault();
+        findCurrentQuery(event.shiftKey ? -1 : 1, false);
+      }
+    });
+
+    updateMemoryStatus();
+    setInterval(updateMemoryStatus, 1000);
+
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (file) loadFile(file);
+      fileInput.value = "";
+    });
+
+    viewport.addEventListener("click", () => {
+      if (root === undefined) fileInput.click();
+    });
+
+    window.addEventListener("dragenter", event => {
+      if (!hasDraggedFiles(event)) return;
+      event.preventDefault();
+      dragDepth++;
+      showDropArea("Drop JSON file", "Release to load this file.");
+    });
+
+    window.addEventListener("dragover", event => {
+      if (!hasDraggedFiles(event)) return;
+      event.preventDefault();
+    });
+
+    window.addEventListener("dragleave", event => {
+      if (!hasDraggedFiles(event)) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) restoreDropAreaAfterDrag();
+    });
+
+    window.addEventListener("drop", event => {
+      if (!hasDraggedFiles(event)) return;
+      event.preventDefault();
+      dragDepth = 0;
+      restoreDropAreaAfterDrag();
+      const file = event.dataTransfer && event.dataTransfer.files[0];
+      if (file) loadFile(file);
+    });
+
+    rootLevelButton.addEventListener("click", () => {
+      expanded = new Set(["[]"]);
+      selectedPathIds.clear();
+      lastSelectedPathId = null;
+      render();
+    });
+
+    expandSelectedButton.addEventListener("click", () => {
+      for (const path of targetPaths()) {
+        if (isContainer(getValueAtPath(path))) expanded.add(pathId(path));
+      }
+
+      render();
+    });
+
+    collapseSelectedButton.addEventListener("click", () => {
+      for (const path of targetPaths()) {
+        expanded.delete(pathId(path));
+      }
+
+      expanded.add("[]");
+      render();
+    });
+
+    expandOneSelectedButton.addEventListener("click", () => {
+      for (const path of targetPaths()) {
+        const value = getValueAtPath(path);
+        if (!isContainer(value)) continue;
+
+        expanded.add(pathId(path));
+        for (const [key, child] of getChildren(value).slice(0, MAX_ROWS_PER_LEVEL)) {
+          if (isContainer(child)) expanded.add(pathId(path.concat(key)));
+        }
+      }
+
+      render();
+    });
+
+    collapseChildrenButton.addEventListener("click", () => {
+      for (const path of targetPaths()) {
+        const id = pathId(path);
+        for (const expandedId of Array.from(expanded)) {
+          if (expandedId !== id && isPathIdDescendant(expandedId, path)) {
+            expanded.delete(expandedId);
+          }
+        }
+      }
+
+      render();
+    });
+
+    copyAllButton.addEventListener("click", () => {
+      copyJsonValue(root, "Copied entire JSON");
+    });
+
+    copySelectedButton.addEventListener("click", () => {
+      const paths = targetPaths();
+      const values = paths.map(path => getValueAtPath(path));
+      const value = values.length === 1 ? values[0] : values;
+      copyJsonValue(value, selectedPathIds.size === 0 ? "Copied root JSON node" : `Copied ${values.length.toLocaleString()} selected JSON node${values.length === 1 ? "" : "s"}`);
+    });
+
+    findButton.addEventListener("click", () => findCurrentQuery(1, true));
+    findNextButton.addEventListener("click", () => findCurrentQuery(1, false));
+    findPreviousButton.addEventListener("click", () => findCurrentQuery(-1, false));
+
+    searchInput.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        findCurrentQuery(event.shiftKey ? -1 : 1, false);
+      }
+    });
+
+    tree.addEventListener("click", event => {
+      const button = event.target.closest("button[data-path]");
+      if (button) {
+        const id = button.dataset.path;
+        if (!id) return;
+
+        if (expanded.has(id)) expanded.delete(id);
+        else expanded.add(id);
+
+        render();
+        return;
+      }
+
+      const row = event.target.closest(".row[data-path]");
+      if (!row) return;
+
+      const selection = window.getSelection();
+      if (selection && selection.type === "Range" && !selection.isCollapsed) return;
+
+      selectPathId(row.dataset.path, event);
+      setStatus("Ready.");
+      render();
+    });
+
+    function toggleOpenMenu() {
+      const nextHidden = !openMenuList.hidden;
+      openMenuList.hidden = nextHidden;
+      openButton.setAttribute("aria-expanded", String(!nextHidden));
+    }
+
+    function closeOpenMenu() {
+      openMenuList.hidden = true;
+      openButton.setAttribute("aria-expanded", "false");
+    }
+
+    async function loadFile(file) {
+      const start = performance.now();
+      selectedPathIds.clear();
+      lastSelectedPathId = null;
+      searchMatchPathId = null;
+      searchMatchPart = "";
+      searchQuery = "";
+      searchMatches = [];
+      searchMatchIndex = -1;
+      setStatus(`Reading ${file.name}…`);
+      emptyStatus.textContent = `Reading ${file.name}…`;
+
+      fileSize = file.size;
+      document.title = `${file.name} - Large JSON Tree Viewer`;
+
+      try {
+        const text = await file.text();
+        const readAt = performance.now();
+        root = JSON.parse(text);
+        const parsedAt = performance.now();
+
+        expanded = new Set(["[]"]);
+        selectedPathIds.clear();
+        lastSelectedPathId = null;
+        searchMatchPathId = null;
+        searchMatchPart = "";
+        searchQuery = "";
+        searchMatches = [];
+        searchMatchIndex = -1;
+        render();
+
+        setStatus("Ready.");
+        setPerformanceStatus(
+          `Read ${(readAt - start).toFixed(1)} ms`,
+          `Parse ${(parsedAt - readAt).toFixed(1)} ms`
+        );
+      } catch (error) {
+        root = undefined;
+        document.title = "Large JSON Tree Viewer";
+        tree.replaceChildren();
+        tree.hidden = true;
+        viewport.classList.add("empty");
+        setEnabled(false);
+        const message = error instanceof Error ? error.message : String(error);
+        setDropAreaIdle("Drop JSON file", message);
+        setStatus(message);
+      }
+    }
+
+    async function loadRemoteJson(name, url) {
+      const start = performance.now();
+      closeOpenMenu();
+      selectedPathIds.clear();
+      lastSelectedPathId = null;
+      searchMatchPathId = null;
+      searchMatchPart = "";
+      searchQuery = "";
+      searchMatches = [];
+      searchMatchIndex = -1;
+      setStatus(`Fetching ${name}...`);
+      emptyStatus.textContent = `Fetching ${name}...`;
+      document.title = `${name} - Large JSON Tree Viewer`;
+
+      try {
+        const response = await fetch(url);
+        const headersAt = performance.now();
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+        }
+
+        const text = await response.text();
+        const bodyAt = performance.now();
+        fileSize = new Blob([text]).size;
+        root = JSON.parse(text);
+        const parsedAt = performance.now();
+
+        expanded = new Set(["[]"]);
+        selectedPathIds.clear();
+        lastSelectedPathId = null;
+        searchMatchPathId = null;
+        searchMatchPart = "";
+        searchQuery = "";
+        searchMatches = [];
+        searchMatchIndex = -1;
+        render();
+
+        setStatus("Ready.");
+        setPerformanceStatus(
+          `Headers ${(headersAt - start).toFixed(1)} ms`,
+          `Body ${(bodyAt - headersAt).toFixed(1)} ms`,
+          `Parse ${(parsedAt - bodyAt).toFixed(1)} ms`
+        );
+      } catch (error) {
+        root = undefined;
+        document.title = "Large JSON Tree Viewer";
+        tree.replaceChildren();
+        tree.hidden = true;
+        viewport.classList.add("empty");
+        setEnabled(false);
+        const message = error instanceof Error ? error.message : String(error);
+        setDropAreaIdle("Drop JSON file", message);
+        setStatus(message);
+      }
+    }
+
+    function render() {
+      if (root === undefined) return;
+
+      const started = performance.now();
+      const fragment = document.createDocumentFragment();
+      let rowCount = 0;
+      visiblePathIds = [];
+
+      function visit(value, key, path, depth, sticky) {
+        const id = pathId(path);
+        const isExpanded = expanded.has(id);
+        visiblePathIds.push(id);
+        fragment.appendChild(createRow({
+          id,
+          key,
+          value,
+          path,
+          depth,
+          sticky,
+          expanded: isExpanded,
+          selected: selectedPathIds.has(id),
+          matchPart: id === searchMatchPathId ? searchMatchPart : "",
+          matchQuery: id === searchMatchPathId ? searchQuery : "",
+        }));
+        rowCount++;
+
+        if (!isContainer(value) || !isExpanded) return;
+
+        const children = getChildren(value);
+        const visibleChildren = children.slice(0, MAX_ROWS_PER_LEVEL);
+
+        for (const [childKey, childValue] of visibleChildren) {
+          visit(childValue, childKey, path.concat(childKey), depth + 1, true);
+        }
+
+        if (children.length > MAX_ROWS_PER_LEVEL) {
+          fragment.appendChild(createLimitRow(children.length, depth + 1));
+          rowCount++;
+        }
+      }
+
+      visit(root, null, [], 0, false);
+
+      tree.replaceChildren(fragment);
+      tree.hidden = false;
+      restoreDropAreaAfterDrag();
+      viewport.classList.remove("empty");
+      setEnabled(true);
+
+      const renderedAt = performance.now();
+      const duration = renderedAt - started;
+      setPerformanceStatus(`Render ${rowCount.toLocaleString()} rows in ${duration.toFixed(1)} ms`);
+      updateStatusMain();
+      return { rowCount, duration };
+    }
+
+    function createRow(row) {
+      const container = isContainer(row.value);
+      const count = childCount(row.value);
+      const kind = valueKind(row.value);
+
+      const el = document.createElement("div");
+      el.className = [
+        "row",
+        row.sticky && row.expanded ? "sticky" : "",
+        row.selected ? "selected" : "",
+      ].filter(Boolean).join(" ");
+      el.style.paddingLeft = `${row.depth * 18 + 8}px`;
+      el.dataset.path = row.id;
+
+      const button = document.createElement("button");
+      button.className = "twisty";
+      button.type = "button";
+      button.dataset.path = row.id;
+      button.disabled = !container || count === 0;
+      button.title = container ? (row.expanded ? "Collapse" : "Expand") : "Primitive value";
+      button.textContent = container && count > 0 ? (row.expanded ? "▾" : "▸") : "";
+      el.appendChild(button);
+
+      if (row.key !== null) {
+        const key = document.createElement("span");
+        key.className = "key";
+        appendHighlightedText(key, String(row.key), row.matchPart === "key" ? row.matchQuery : "");
+        el.appendChild(key);
+
+        const colon = document.createElement("span");
+        colon.className = "colon";
+        colon.textContent = ": ";
+        el.appendChild(colon);
+      }
+
+      const value = document.createElement("span");
+      value.className = `value ${kind}`;
+      appendHighlightedText(value, preview(row.value), row.matchPart === "value" ? row.matchQuery : "");
+      el.appendChild(value);
+
+      if (container && Array.isArray(row.value)) {
+        const meta = document.createElement("span");
+        meta.className = "meta";
+        meta.textContent = `Array(${count})`;
+        el.appendChild(meta);
+      }
+
+      return el;
+    }
+
+    function createLimitRow(totalChildren, depth) {
+      const el = document.createElement("div");
+      el.className = "row";
+      el.style.paddingLeft = `${depth * 18 + 8}px`;
+
+      const spacer = document.createElement("span");
+      spacer.className = "twisty";
+      el.appendChild(spacer);
+
+      const text = document.createElement("span");
+      text.className = "value string";
+      text.textContent = `Showing ${MAX_ROWS_PER_LEVEL.toLocaleString()} of ${totalChildren.toLocaleString()} child rows at this level.`;
+      el.appendChild(text);
+
+      return el;
+    }
+
+    function appendHighlightedText(parent, text, query) {
+      if (!query) {
+        parent.textContent = text;
+        return;
+      }
+
+      const index = text.toLowerCase().indexOf(query.toLowerCase());
+      if (index === -1) {
+        parent.textContent = text;
+        return;
+      }
+
+      parent.appendChild(document.createTextNode(text.slice(0, index)));
+
+      const match = document.createElement("mark");
+      match.className = "match-text";
+      match.textContent = text.slice(index, index + query.length);
+      parent.appendChild(match);
+
+      parent.appendChild(document.createTextNode(text.slice(index + query.length)));
+    }
+
+    function findCurrentQuery(direction = 1, forceRefresh = false) {
+      if (root === undefined) return;
+
+      const query = searchInput.value.trim();
+      if (!query) return;
+
+      const started = performance.now();
+      if (forceRefresh || query !== searchQuery || searchMatches.length === 0) {
+        searchMatches = findMatches(root, query);
+        searchMatchIndex = direction >= 0 ? -1 : 0;
+      }
+
+      const searchedAt = performance.now();
+      if (searchMatches.length === 0) {
+        searchMatchPathId = null;
+        searchMatchPart = "";
+        searchQuery = "";
+        render();
+        setStatus(`No match for "${query}".`);
+        setPerformanceStatus(`Search ${(searchedAt - started).toFixed(1)} ms`);
+        return;
+      }
+
+      searchMatchIndex = wrapIndex(searchMatchIndex + direction, searchMatches.length);
+      const match = searchMatches[searchMatchIndex];
+      searchMatchPathId = pathId(match.path);
+      searchMatchPart = match.part;
+      searchQuery = query;
+      expanded = new Set(ancestorIds(match.path));
+      const renderStats = render();
+      setStatus(`Found ${searchMatchIndex + 1} of ${searchMatches.length.toLocaleString()} at ${formatPath(match.path)}.`);
+      setPerformanceStatus(
+        `Search ${(searchedAt - started).toFixed(1)} ms`,
+        `Render ${renderStats.rowCount.toLocaleString()} rows ${renderStats.duration.toFixed(1)} ms`
+      );
+
+      requestAnimationFrame(() => {
+        const selector = `[data-path="${CSS.escape(pathId(match.path))}"]`;
+        document.querySelector(selector)?.scrollIntoView({ block: "center" });
+      });
+    }
+
+    function findMatches(value, query) {
+      const needle = query.toLowerCase();
+      const stack = [{ value, path: [] }];
+      const matches = [];
+      let visited = 0;
+
+      while (stack.length > 0 && visited < MAX_SEARCH_VISITS) {
+        visited++;
+        const item = stack.pop();
+        const current = item.value;
+        const path = item.path;
+        const key = path[path.length - 1];
+
+        if (key !== undefined && String(key).toLowerCase().includes(needle)) {
+          matches.push({ path, part: "key" });
+        }
+
+        if (!isContainer(current)) {
+          if (String(current).toLowerCase().includes(needle)) matches.push({ path, part: "value" });
+          continue;
+        }
+
+        const children = getChildren(current);
+        for (let i = children.length - 1; i >= 0; i--) {
+          const [childKey, childValue] = children[i];
+          stack.push({ value: childValue, path: path.concat(childKey) });
+        }
+      }
+
+      if (visited >= MAX_SEARCH_VISITS) {
+        setStatus(`Search stopped after ${MAX_SEARCH_VISITS.toLocaleString()} visited nodes.`);
+      }
+
+      return matches;
+    }
+
+    function wrapIndex(index, length) {
+      return ((index % length) + length) % length;
+    }
+
+    function ancestorIds(path) {
+      const result = [];
+      for (let i = 0; i <= path.length; i++) {
+        result.push(pathId(path.slice(0, i)));
+      }
+      return result;
+    }
+
+    function formatPath(path) {
+      if (path.length === 0) return "root";
+      return path.map(part => typeof part === "number" ? `[${part}]` : `.${part}`).join("").replace(/^\./, "");
+    }
+
+    function pathId(path) {
+      return JSON.stringify(path);
+    }
+
+    function selectPathId(id, event) {
+      if (!id) return;
+
+      if (event.shiftKey && lastSelectedPathId !== null) {
+        const start = visiblePathIds.indexOf(lastSelectedPathId);
+        const end = visiblePathIds.indexOf(id);
+        if (start !== -1 && end !== -1) {
+          selectedPathIds.clear();
+          const [from, to] = start < end ? [start, end] : [end, start];
+          for (const visibleId of visiblePathIds.slice(from, to + 1)) {
+            selectedPathIds.add(visibleId);
+          }
+          lastSelectedPathId = id;
+          return;
+        }
+      }
+
+      if (event.ctrlKey || event.metaKey) {
+        if (selectedPathIds.has(id)) selectedPathIds.delete(id);
+        else selectedPathIds.add(id);
+      } else {
+        selectedPathIds = new Set([id]);
+      }
+
+      lastSelectedPathId = id;
+    }
+
+    function targetPaths() {
+      if (selectedPathIds.size === 0) return [[]];
+      return Array.from(selectedPathIds, id => JSON.parse(id));
+    }
+
+    function getValueAtPath(path) {
+      let value = root;
+      for (const part of path) {
+        if (!isContainer(value)) return undefined;
+        value = value[part];
+      }
+      return value;
+    }
+
+    function isPathIdDescendant(id, ancestorPath) {
+      const path = JSON.parse(id);
+      if (path.length <= ancestorPath.length) return false;
+
+      for (let i = 0; i < ancestorPath.length; i++) {
+        if (path[i] !== ancestorPath[i]) return false;
+      }
+
+      return true;
+    }
+
+    async function copyJsonValue(value, label) {
+      if (value === undefined) return;
+
+      const started = performance.now();
+
+      try {
+        const text = JSON.stringify(value, null, 2);
+        const stringifiedAt = performance.now();
+        await copyText(text);
+        const copiedAt = performance.now();
+
+        setStatus(label);
+        setPerformanceStatus(
+          `Stringify ${formatBytes(text.length)} ${(stringifiedAt - started).toFixed(1)} ms`,
+          `Copy ${(copiedAt - stringifiedAt).toFixed(1)} ms`
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setStatus(`Copy failed: ${message}`);
+      }
+    }
+
+    async function copyText(text) {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.top = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+
+      try {
+        if (!document.execCommand("copy")) {
+          throw new Error("Clipboard API is unavailable.");
+        }
+      } finally {
+        textarea.remove();
+      }
+    }
+
+    function isContainer(value) {
+      return value !== null && typeof value === "object";
+    }
+
+    function childCount(value) {
+      if (Array.isArray(value)) return value.length;
+      if (value !== null && typeof value === "object") return Object.keys(value).length;
+      return 0;
+    }
+
+    function getChildren(value) {
+      if (Array.isArray(value)) return value.map((item, index) => [index, item]);
+      if (value !== null && typeof value === "object") return Object.entries(value);
+      return [];
+    }
+
+    function preview(value, maxItems = MAX_PREVIEW_ITEMS) {
+      if (!isContainer(value)) return primitivePreview(value);
+
+      const children = getChildren(value);
+      const shown = children.slice(0, maxItems).map(([key, child]) => {
+        const childText = isContainer(child)
+          ? Array.isArray(child)
+            ? `Array(${child.length})`
+            : `{…}`
+          : primitivePreview(child);
+
+        return Array.isArray(value) ? childText : `${String(key)}: ${childText}`;
+      });
+
+      const suffix = children.length > maxItems ? ", …" : "";
+      return Array.isArray(value)
+        ? `[${shown.join(", ")}${suffix}]`
+        : `{${shown.join(", ")}${suffix}}`;
+    }
+
+    function primitivePreview(value) {
+      if (value === null) return "null";
+
+      if (typeof value === "string") {
+        const text = value.length > MAX_STRING_PREVIEW
+          ? `${value.slice(0, MAX_STRING_PREVIEW - 1)}…`
+          : value;
+        return JSON.stringify(text);
+      }
+
+      return String(value);
+    }
+
+    function valueKind(value) {
+      if (value === null) return "null";
+      if (Array.isArray(value)) return "array";
+      return typeof value;
+    }
+
+    function formatBytes(bytes) {
+      const units = ["B", "KB", "MB", "GB"];
+      let value = bytes;
+      let unit = 0;
+
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+      }
+
+      return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+    }
+
+    function hasDraggedFiles(event) {
+      return Array.from(event.dataTransfer?.types || []).includes("Files");
+    }
+
+    function showDropArea(title, message) {
+      emptyState.querySelector("strong").textContent = title;
+      emptyStatus.textContent = message;
+      emptyState.hidden = false;
+    }
+
+    function setDropAreaIdle(title, message) {
+      dropAreaTitle = title;
+      dropAreaMessage = message;
+      showDropArea(title, message);
+    }
+
+    function restoreDropAreaAfterDrag() {
+      if (root !== undefined) {
+        emptyState.hidden = true;
+        return;
+      }
+
+      showDropArea(dropAreaTitle, dropAreaMessage);
+    }
+
+    function setEnabled(enabled) {
+      rootLevelButton.disabled = !enabled;
+      expandSelectedButton.disabled = !enabled;
+      collapseSelectedButton.disabled = !enabled;
+      expandOneSelectedButton.disabled = !enabled;
+      collapseChildrenButton.disabled = !enabled;
+      copyAllButton.disabled = !enabled;
+      copySelectedButton.disabled = !enabled;
+      findPreviousButton.disabled = !enabled;
+      findNextButton.disabled = !enabled;
+      findButton.disabled = !enabled;
+    }
+
+    function setStatus(message) {
+      mainStatusText = message;
+      updateStatusMain();
+    }
+
+    function updateStatusMain() {
+      statusMainEl.textContent = mainStatusText;
+      updateSelectionStatus();
+    }
+
+    function updateSelectionStatus() {
+      const selectionText = selectionStatusText();
+      selectionStatusEl.hidden = !selectionText;
+      selectionStatusEl.textContent = selectionText;
+    }
+
+    function selectionStatusText() {
+      if (root === undefined || selectedPathIds.size === 0) return "";
+      if (selectedPathIds.size > 1) return `Selected: ${selectedPathIds.size.toLocaleString()} rows`;
+
+      const [id] = selectedPathIds;
+      return `Selected: ${formatPath(JSON.parse(id))}`;
+    }
+
+    function setPerformanceStatus(...messages) {
+      performanceStatusEl.replaceChildren();
+
+      for (const message of messages) {
+        const item = document.createElement("span");
+        item.className = "perf-item";
+        item.textContent = message;
+        performanceStatusEl.appendChild(item);
+      }
+    }
+
+    function updateMemoryStatus() {
+      const memory = performance.memory;
+      if (!memory) {
+        memoryStatusEl.textContent = "Memory unavailable";
+        return;
+      }
+
+      memoryStatusEl.textContent =
+        `${formatBytes(memory.usedJSHeapSize)}`;
+    }
+  </script>
+</body>
+</html>
