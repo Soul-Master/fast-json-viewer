@@ -158,13 +158,14 @@
     }
 
     .tree {
+      --row-height: 24px;
       font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
       padding: 6px 0 60vh 0;
       min-width: max-content;
     }
 
     .row {
-      min-height: 24px;
+      min-height: var(--row-height);
       display: flex;
       align-items: center;
       padding-right: 14px;
@@ -185,8 +186,8 @@
 
     .row.sticky {
       position: sticky;
-      top: 0;
-      z-index: 9;
+      top: calc(var(--sticky-level, 0) * var(--row-height));
+      z-index: var(--sticky-z, 9);
       box-shadow: 0 1px 0 color-mix(in oklab, CanvasText 16%, transparent);
     }
 
@@ -225,7 +226,7 @@
     .value.number { color: color-mix(in oklab, #8f4e00 86%, CanvasText 14%); }
     .value.boolean { color: color-mix(in oklab, #a01656 86%, CanvasText 14%); }
     .value.null { color: color-mix(in oklab, CanvasText 50%, transparent); }
-    .value.array, .value.object { color: color-mix(in oklab, CanvasText 82%, transparent); }
+    .value.array, .value.object { color: color-mix(in oklab, CanvasText 45%, transparent); }
 
     .match-text {
       border-radius: 3px;
@@ -325,7 +326,7 @@
     </section>
 
     <footer>
-      <span id="statusMain" class="footer-main">Ready.</span>
+      <span id="statusMain" class="footer-main">Ready</span>
       <span id="selectionStatus" class="footer-metric" hidden></span>
       <span id="memoryStatus" class="footer-metric" title="Memory usage">Memory unavailable</span>
       <span id="performanceStatus" class="footer-perf">
@@ -337,11 +338,12 @@
   <script type="module">
     const MAX_PREVIEW_ITEMS = 5;
     const MAX_STRING_PREVIEW = 120;
-    const MAX_ROWS_PER_LEVEL = 1_000;
-    const MAX_SEARCH_VISITS = 300_000;
+    const MAX_ROWS_PER_LEVEL = 2_000;
+    const STICKY_ROW_HEIGHT = 24;
+    const ROOT_PATH_ID = "[]";
 
     let root = undefined;
-    let expanded = new Set(["[]"]);
+    let expanded = new Set([ROOT_PATH_ID]);
     let selectedPathIds = new Set();
     let visiblePathIds = [];
     let lastSelectedPathId = null;
@@ -355,6 +357,8 @@
     let dropAreaTitle = "Drop JSON file";
     let dropAreaMessage = "Waiting for file.";
     let mainStatusText = "Ready.";
+    let stickyRowBounds = [];
+    let stickyUpdateFrame = 0;
 
     const viewport = document.getElementById("viewport");
     const tree = document.getElementById("tree");
@@ -407,6 +411,8 @@
     document.addEventListener("keydown", event => {
       if (event.key === "Escape") closeOpenMenu();
     });
+
+    viewport.addEventListener("scroll", scheduleStickyRowsUpdate, { passive: true });
 
     document.addEventListener("keydown", event => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
@@ -463,10 +469,11 @@
     });
 
     rootLevelButton.addEventListener("click", () => {
-      expanded = new Set(["[]"]);
+      expanded = new Set([ROOT_PATH_ID]);
       selectedPathIds.clear();
       lastSelectedPathId = null;
       render();
+      viewport.scrollTo({ top: 0, left: 0 });
     });
 
     expandSelectedButton.addEventListener("click", () => {
@@ -479,10 +486,11 @@
 
     collapseSelectedButton.addEventListener("click", () => {
       for (const path of targetPaths()) {
-        expanded.delete(pathId(path));
+        const id = pathId(path);
+        if (id !== ROOT_PATH_ID) expanded.delete(id);
       }
 
-      expanded.add("[]");
+      expanded.add(ROOT_PATH_ID);
       render();
     });
 
@@ -540,6 +548,7 @@
       if (button) {
         const id = button.dataset.path;
         if (!id) return;
+        if (id === ROOT_PATH_ID && expanded.has(id)) return;
 
         if (expanded.has(id)) expanded.delete(id);
         else expanded.add(id);
@@ -555,7 +564,7 @@
       if (selection && selection.type === "Range" && !selection.isCollapsed) return;
 
       selectPathId(row.dataset.path, event);
-      setStatus("Ready.");
+      setStatus("Ready");
       render();
     });
 
@@ -591,7 +600,7 @@
         root = JSON.parse(text);
         const parsedAt = performance.now();
 
-        expanded = new Set(["[]"]);
+        expanded = new Set([ROOT_PATH_ID]);
         selectedPathIds.clear();
         lastSelectedPathId = null;
         searchMatchPathId = null;
@@ -601,7 +610,7 @@
         searchMatchIndex = -1;
         render();
 
-        setStatus("Ready.");
+        setStatus("Ready");
         setPerformanceStatus(
           `Read ${(readAt - start).toFixed(1)} ms`,
           `Parse ${(parsedAt - readAt).toFixed(1)} ms`
@@ -647,7 +656,7 @@
         root = JSON.parse(text);
         const parsedAt = performance.now();
 
-        expanded = new Set(["[]"]);
+        expanded = new Set([ROOT_PATH_ID]);
         selectedPathIds.clear();
         lastSelectedPathId = null;
         searchMatchPathId = null;
@@ -657,7 +666,7 @@
         searchMatchIndex = -1;
         render();
 
-        setStatus("Ready.");
+        setStatus("Ready");
         setPerformanceStatus(
           `Headers ${(headersAt - start).toFixed(1)} ms`,
           `Body ${(bodyAt - headersAt).toFixed(1)} ms`,
@@ -684,9 +693,10 @@
       let rowCount = 0;
       visiblePathIds = [];
 
-      function visit(value, key, path, depth, sticky) {
+      function visit(value, key, path, depth, stickyLevel) {
         const id = pathId(path);
         const isExpanded = expanded.has(id);
+        const sticky = isContainer(value) && isExpanded;
         visiblePathIds.push(id);
         fragment.appendChild(createRow({
           id,
@@ -695,6 +705,7 @@
           path,
           depth,
           sticky,
+          stickyLevel,
           expanded: isExpanded,
           selected: selectedPathIds.has(id),
           matchPart: id === searchMatchPathId ? searchMatchPart : "",
@@ -706,9 +717,10 @@
 
         const children = getChildren(value);
         const visibleChildren = children.slice(0, MAX_ROWS_PER_LEVEL);
+        const childStickyLevel = sticky ? stickyLevel + 1 : stickyLevel;
 
         for (const [childKey, childValue] of visibleChildren) {
-          visit(childValue, childKey, path.concat(childKey), depth + 1, true);
+          visit(childValue, childKey, path.concat(childKey), depth + 1, childStickyLevel);
         }
 
         if (children.length > MAX_ROWS_PER_LEVEL) {
@@ -717,13 +729,14 @@
         }
       }
 
-      visit(root, null, [], 0, false);
+      visit(root, null, [], 0, 0);
 
       tree.replaceChildren(fragment);
       tree.hidden = false;
       restoreDropAreaAfterDrag();
       viewport.classList.remove("empty");
       setEnabled(true);
+      refreshStickyRowBounds();
 
       const renderedAt = performance.now();
       const duration = renderedAt - started;
@@ -736,22 +749,30 @@
       const container = isContainer(row.value);
       const count = childCount(row.value);
       const kind = valueKind(row.value);
+      const rootRow = row.id === ROOT_PATH_ID;
 
       const el = document.createElement("div");
       el.className = [
         "row",
-        row.sticky && row.expanded ? "sticky" : "",
+        row.sticky ? "sticky" : "",
         row.selected ? "selected" : "",
       ].filter(Boolean).join(" ");
       el.style.paddingLeft = `${row.depth * 18 + 8}px`;
+      el.dataset.depth = row.depth;
+      if (row.sticky) {
+        el.dataset.stickyLevel = row.stickyLevel;
+        el.style.setProperty("--sticky-level", row.stickyLevel);
+        el.style.setProperty("--sticky-z", Math.max(9, 40 - row.stickyLevel));
+      }
       el.dataset.path = row.id;
 
       const button = document.createElement("button");
       button.className = "twisty";
       button.type = "button";
       button.dataset.path = row.id;
-      button.disabled = !container || count === 0;
-      button.title = container ? (row.expanded ? "Collapse" : "Expand") : "Primitive value";
+      // Collapsing the root only hides the entire inspection surface.
+      button.disabled = rootRow || !container || count === 0;
+      button.title = rootRow ? "Root is always expanded" : container ? (row.expanded ? "Collapse" : "Expand") : "Primitive value";
       button.textContent = container && count > 0 ? (row.expanded ? "▾" : "▸") : "";
       el.appendChild(button);
 
@@ -769,17 +790,70 @@
 
       const value = document.createElement("span");
       value.className = `value ${kind}`;
-      appendHighlightedText(value, preview(row.value), row.matchPart === "value" ? row.matchQuery : "");
+      if (!container || !row.expanded) {
+        appendHighlightedText(value, preview(row.value), row.matchPart === "value" ? row.matchQuery : "");
+      }
       el.appendChild(value);
 
-      if (container && Array.isArray(row.value)) {
+      const metaText = containerMetaText(row.value, rootRow);
+      if (metaText) {
         const meta = document.createElement("span");
         meta.className = "meta";
-        meta.textContent = `Array(${count})`;
+        meta.textContent = metaText;
         el.appendChild(meta);
       }
 
       return el;
+    }
+
+    function containerMetaText(value, rootRow) {
+      if (Array.isArray(value)) return `Array(${value.length})`;
+      if (rootRow && value !== null && typeof value === "object") return `Object(${Object.keys(value).length})`;
+      return "";
+    }
+
+    function refreshStickyRowBounds() {
+      const rows = Array.from(tree.querySelectorAll(".row"));
+      stickyRowBounds = [];
+
+      for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+        const row = rows[rowIndex];
+        if (row.dataset.stickyLevel === undefined) continue;
+
+        const depth = Number(row.dataset.depth);
+        const level = Number(row.dataset.stickyLevel);
+        let endOffset = tree.scrollHeight;
+
+        for (let nextIndex = rowIndex + 1; nextIndex < rows.length; nextIndex++) {
+          const nextDepth = Number(rows[nextIndex].dataset.depth);
+          if (Number.isFinite(nextDepth) && nextDepth <= depth) {
+            endOffset = rows[nextIndex].offsetTop;
+            break;
+          }
+        }
+
+        stickyRowBounds.push({ row, endOffset, level });
+      }
+
+      updateStickyRows();
+    }
+
+    function scheduleStickyRowsUpdate() {
+      if (stickyUpdateFrame !== 0) return;
+
+      stickyUpdateFrame = requestAnimationFrame(() => {
+        stickyUpdateFrame = 0;
+        updateStickyRows();
+      });
+    }
+
+    function updateStickyRows() {
+      const scrollTop = viewport.scrollTop;
+
+      for (const item of stickyRowBounds) {
+        const stackEnd = item.endOffset - ((item.level + 1) * STICKY_ROW_HEIGHT);
+        item.row.classList.toggle("sticky", scrollTop < stackEnd);
+      }
     }
 
     function createLimitRow(totalChildren, depth) {
@@ -850,6 +924,7 @@
       searchMatchPart = match.part;
       searchQuery = query;
       expanded = new Set(ancestorIds(match.path));
+      expanded.add(ROOT_PATH_ID);
       const renderStats = render();
       setStatus(`Found ${searchMatchIndex + 1} of ${searchMatches.length.toLocaleString()} at ${formatPath(match.path)}.`);
       setPerformanceStatus(
@@ -869,7 +944,7 @@
       const matches = [];
       let visited = 0;
 
-      while (stack.length > 0 && visited < MAX_SEARCH_VISITS) {
+      while (stack.length > 0) {
         visited++;
         const item = stack.pop();
         const current = item.value;
@@ -890,10 +965,6 @@
           const [childKey, childValue] = children[i];
           stack.push({ value: childValue, path: path.concat(childKey) });
         }
-      }
-
-      if (visited >= MAX_SEARCH_VISITS) {
-        setStatus(`Search stopped after ${MAX_SEARCH_VISITS.toLocaleString()} visited nodes.`);
       }
 
       return matches;

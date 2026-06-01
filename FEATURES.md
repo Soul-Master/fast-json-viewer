@@ -26,6 +26,7 @@ Fast JSON Viewer helps users open and inspect large JSON files in the browser wi
 ✅ View JSON as an expandable object and array tree.<br>
 ✅ Start with a compact view instead of showing the entire file at once.<br>
 ✅ Expand and collapse sections on demand.<br>
+✅ Keep expanded level headers sticky in a stacked header area while scrolling nested data, then release them after their expanded section is passed and restore them when scrolling back up.<br>
 ✅ Show compact previews for objects, arrays, strings, booleans, numbers, and null values.<br>
 ✅ Shorten very long text and previews so the interface stays readable.<br>
 ✅ Limit how many child rows appear at once to keep very large sections responsive.<br>
